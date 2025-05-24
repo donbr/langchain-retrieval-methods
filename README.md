@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This analysis examines a systematic comparison of seven retrieval methods in LangChain using John Wick movie reviews as a test dataset. The study demonstrates how different retrieval strategies affect both the quality and focus of responses, revealing key insights about document chunking, search algorithms, and ensemble approaches in Retrieval-Augmented Generation (RAG) systems.
+This analysis examines a systematic comparison of seven retrieval methods in LangChain using John Wick movie reviews as source data. The study demonstrates how different retrieval strategies affect both the quality and focus of responses, revealing key insights about document chunking, search algorithms, and ensemble approaches in Retrieval-Augmented Generation (RAG) systems.
 
 **Key Finding**: Each retrieval method provides different perspectives on the same question ("Did people generally like John Wick?"), with varying levels of detail, nuance, and temporal awareness across the movie series.
 
@@ -38,9 +38,9 @@ retrever_method_comparisonon.ipynb
 
 The experiment uses **Qdrant Cloud** as the vector database, processing 100 John Wick movie reviews from 4 films. This demonstrates a **modern approach** where the baseline documents are loaded directly without chunking - a significant departure from historical RAG practices.
 
-**Historical Context (Pre-2024)**: Traditional RAG systems almost always chunked documents before vectorization, as document loaders and text splitters were tightly coupled.
+**Historical Context (Pre-2024)**: Traditional RAG systems almost always chunked documents before vectorization, as frameworks were architecturally designed with text splitting as an integrated, expected step rather than a separate transformation.
 
-**Current Practice (2025)**: LangChain's CSVLoader now creates one document per row without automatic chunking, allowing for three distinct document organization strategies:
+**Current Practice (2025)**: Modern LangChain separates loading from chunking, with CSVLoader creating one document per row without automatic splitting. This architectural shift enables three distinct document organization strategies:
 
 - **Baseline Collection**: 100 original documents (1:1 ratio, **no chunking**)
 - **Parent Document Collection**: 4,817 documents (chunked with retrieval of full parents)  
