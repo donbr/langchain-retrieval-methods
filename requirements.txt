@@ -1,0 +1,11 @@
+langchain
+langchain-community
+langchain-experimental
+langchain-openai
+langchain-qdrant
+langchain-cohere
+rank_bm25
+qdrant-client
+ipykernel
+python-dotenv
+langsmith
