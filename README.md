@@ -29,51 +29,61 @@ uv pip install -r requirements.txt
 The main notebook is located at:
 
 ```
-retrever_method_comparisonon.ipynb
+retrever_method_comparison.ipynb
 ```
+
+---
 
 ## Key Concepts Explained
 
 ### 1. Vector Stores and Document Processing
 
-The experiment uses **Qdrant Cloud** as the vector database, processing 100 John Wick movie reviews from 4 films. This demonstrates a **modern approach** where the baseline documents are loaded directly without chunking - a significant departure from historical RAG practices.
+The experiment uses **Qdrant Cloud** as the vector database, processing 100 John Wick movie reviews from 4 films. This demonstrates a **modern approach** where baseline documents are loaded directly without chunking—a significant departure from historical RAG practices enabled by recent advances in language model capabilities.
 
-**Historical Context (Pre-2024)**: Traditional RAG systems almost always chunked documents before vectorization, as frameworks were architecturally designed with text splitting as an integrated, expected step rather than a separate transformation.
+**Historical Context (Pre-2024)**: Traditional RAG systems almost always chunked documents before vectorization, as frameworks were architecturally designed with text splitting as an integrated, expected step rather than a separate transformation. This approach was largely necessitated by limited context windows—early ChatGPT models supported only 4,000 tokens, making chunking essential for processing longer documents.
 
-**Current Practice (2025)**: Modern LangChain separates loading from chunking, with CSVLoader creating one document per row without automatic splitting. This architectural shift enables three distinct document organization strategies:
+**The Context Window Revolution (2024)**: A significant shift occurred in 2024 as LLM context windows expanded dramatically—from 4,000 tokens to 32,000 tokens as standard, with cutting-edge models reaching 128,000 tokens (equivalent to a 250-page book). This expansion sparked industry debate about "RAG vs. Long Context," which resolved by mid-2024 with the consensus that both approaches complement each other rather than compete.
+
+**Current Practice (2025)**: Modern LangChain architecture separates loading from chunking, with CSVLoader creating complete documents per row without automatic splitting. This flexibility, combined with expanded context windows, enables strategic document organization rather than mandatory chunking:
 
 - **Baseline Collection**: 100 original documents (1:1 ratio, **no chunking**)
-- **Parent Document Collection**: 4,817 documents (chunked with retrieval of full parents)  
-- **Semantic Collection**: 179 documents (semantically-aware chunking)
+- **Parent Document Collection**: 4,817 documents (strategic chunking with full parent retrieval)  
+- **Semantic Collection**: 179 documents (semantically-aware chunking for efficiency)
 
-### 2. Document Chunking Strategies
+This approach allows direct comparison of chunked versus non-chunked strategies—something that was both technically difficult and less practical when context windows were severely constrained.
 
-#### Traditional Chunking (When Applied)
-- **RecursiveCharacterTextSplitter**: Fixed-size chunks (200 characters)
-- Creates predictable, uniform segments
-- May break semantic boundaries
+### 2. Document Chunking Strategies and Architectural Evolution
 
-#### **Document Loading Evolution**
-- **Pre-2024**: Document loaders typically included automatic chunking parameters
-- **2024-2025**: Clear separation between loading and chunking allows for:
-  - Direct vectorization of complete documents (as shown in baseline)
-  - Optional post-loading chunking strategies
-  - Comparison of chunked vs non-chunked approaches
+**The Paradigm Shift**: The notebook demonstrates the evolution from mandatory to strategic chunking:
+- **Traditional (Pre-2024)**: Load → Chunk → Vectorize → Store
+- **Modern (2025)**: Load → Vectorize → Store (with optional, strategic chunking)
 
-#### **Architectural Shift**
-The notebook demonstrates a **paradigm shift** in RAG architecture:
-- **Traditional**: Load → Chunk → Vectorize → Store
-- **Modern**: Load → Vectorize → Store (with optional chunking strategies)
+#### **Strategic Chunking Approaches**
 
-#### Semantic Chunking  
-- **SemanticChunker**: Uses embeddings to find natural breakpoints
-- Results in 179 semantically coherent chunks vs 4,817 traditional chunks
-- Preserves meaning boundaries using "percentile" threshold
+**Traditional Fixed-Size Chunking**:
+- **RecursiveCharacterTextSplitter**: Creates uniform 200-character segments
+- **Strengths**: Predictable, uniform processing
+- **Limitations**: May break semantic boundaries, creates many small chunks
+
+**Semantic Chunking**:
+- **SemanticChunker**: Uses embeddings to identify natural breakpoints
+- **Efficiency Gain**: Produces 179 semantically coherent chunks versus 4,817 traditional chunks—a 96% reduction while preserving meaning
+- **Method**: Employs "percentile" threshold to maintain semantic boundaries
+
+**Parent Document Strategy**:
+- **Approach**: Index small chunks (200 characters) but retrieve full parent documents
+- **Benefit**: Combines precision of granular search with comprehensive context
+- **Scale**: 4,817 searchable chunks linked to 100 complete documents
 
 ### 3. Embedding Strategy
+
+**Technical Configuration**:
 - **Model**: OpenAI `text-embedding-3-small` (1536 dimensions)
-- **Distance Metric**: Cosine similarity
-- **Search Configuration**: Top-k retrieval (k=10 for most methods)
+- **Rationale**: Optimized balance of accuracy, efficiency, and cost-effectiveness for general-purpose applications
+- **Distance Metric**: Cosine similarity for semantic relevance scoring
+- **Search Configuration**: Top-k retrieval (k=10 for most methods) ensuring diverse result sets
+
+The 1536-dimensional embedding space provides sufficient granularity for semantic distinction while maintaining computational efficiency—a sweet spot identified through extensive benchmarking in production RAG systems.
 
 ---
 

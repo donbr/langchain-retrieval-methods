@@ -8,4 +8,5 @@ rank_bm25
 qdrant-client
 ipykernel
 python-dotenv
-langsmith
+langsmith[otel]
+grandalf
