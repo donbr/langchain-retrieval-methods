@@ -9,4 +9,6 @@ qdrant-client
 ipykernel
 python-dotenv
 langsmith[otel]
+redis
+testcontainers[redis]
 grandalf

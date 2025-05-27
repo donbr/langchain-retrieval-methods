@@ -14,4 +14,3 @@ data/
 
 # Preserve directory but ignore contents
 data/*
-!data/.gitkeep
