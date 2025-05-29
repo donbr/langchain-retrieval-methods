@@ -1,24 +1,46 @@
+# Docker Compose Configuration for LangChain Retrieval Methods
+# Updated: May 2025
+# Note: version specification is obsolete as of Docker Compose V2 (2022+)
+
 services:
+  # Qdrant Vector Database - for similarity search and AI applications
   qdrant:
     image: qdrant/qdrant:latest
     container_name: langchain_qdrant
+    restart: unless-stopped
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "6333:6333"  # HTTP API & Dashboard
+      - "6334:6334"  # gRPC API
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/collections"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    environment:
+      - QDRANT__LOG_LEVEL=${QDRANT__LOG_LEVEL}
+    networks:
+      - langchain_network
+    # Healthcheck omitted: Qdrant image does not include curl/wget/nc. Official docs recommend using external health checks (see admin guide).
+    # For health: run `curl http://localhost:6333/health` from the host or use the provided health_check.sh script.
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
 
+  # Redis - in-memory data store for caching and parent document storage
   redis:
     image: redis:latest
     container_name: langchain_redis
-    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    command: [
+      "redis-server",
+      "--save", "60", "1",           # Save if 1+ keys change in 60 seconds
+      "--loglevel", "warning",       # Reduced logging
+      "--maxmemory", "1gb",          # Memory limit
+      "--maxmemory-policy", "allkeys-lru"  # Eviction policy
+    ]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -26,7 +48,94 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - langchain_network
 
+  # PostgreSQL - production-ready relational database
+  postgres:
+    image: postgres:latest
+    container_name: langchain_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langchain_network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+
+  # Adminer - web-based database management tool
+  adminer:
+    image: adminer:latest
+    container_name: langchain_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: ${ADMINER_DESIGN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - langchain_network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Phoenix - AI observability and evaluation platform
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: langchain_phoenix
+    restart: unless-stopped
+    ports:
+      - "6006:6006"   # Phoenix UI & HTTP OTLP
+      - "4317:4317"   # gRPC OTLP
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+      - PHOENIX_SQL_DATABASE_URL=${PHOENIX_SQL_DATABASE_URL}
+    volumes:
+      - phoenix_data:/mnt/data
+    stdin_open: true  # Enable interactive mode
+    tty: true         # Allocate pseudo-TTY
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    networks:
+      - langchain_network
+
+# Named volumes for data persistence
 volumes:
   qdrant_data:
+    driver: local
   redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+  phoenix_data:
+    driver: local
+
+# Optional: Custom network for service isolation
+networks:
+  langchain_network:
+    driver: bridge

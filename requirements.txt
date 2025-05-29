@@ -12,3 +12,5 @@ langsmith[otel]
 redis
 testcontainers[redis]
 grandalf
+arize-phoenix-otel 
+openinference-instrumentation-langchain
