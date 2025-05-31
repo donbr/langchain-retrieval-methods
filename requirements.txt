@@ -14,3 +14,8 @@ testcontainers[redis]
 grandalf
 arize-phoenix-otel 
 openinference-instrumentation-langchain
+psycopg2-binary
+asyncpg
+prefect-aws
+pandas
+prefect

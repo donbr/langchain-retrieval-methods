@@ -1,10 +1,10 @@
 # %% [markdown]
 # # Introduction
 # 
-# Welcome to the **LangChain Retrieval Methods** notebook.  
+# Welcome to the **LangChain Retrieval Methods** notebook with **intelligent data ingestion and workflow orchestration**.  
 # In this tutorial you will:
 # 
-# 1. **Load** a small corpus of John Wick movie reviews.
+# 1. **Load and ingest** a small corpus of John Wick movie reviews using persistent storage
 # 2. **Explore** seven distinct retrieval strategies:
 #    - Naive (whole‐document vectors)
 #    - BM25 (keyword matching)
@@ -20,19 +20,133 @@
 #    - **Cost** (API/token usage)
 #    - **Resource footprint** (index size & shape)
 # 
-# 4. **Visualize** key metrics and response examples to understand trade-offs.
+# 4. **Visualize** key metrics and response examples to understand trade-offs
+# 5. **Orchestrate** data workflows using modern infrastructure patterns
 # 
-# By the end of the notebook, you’ll know:
-# - When to **start simple** (Naive or BM25) versus **scale up** (Ensemble or Semantic).
-# - How context-window advances (4 K → 32 K → 128 K) and loader-splitter decoupling shape modern RAG architectures.
-# - Practical tips for **production readiness**, including index sharding, zero-downtime reindexes, and drift monitoring.
+# ## 🚀 **Smart Ingestion Pipeline Architecture**
 # 
-# > **Prerequisites**  
-# > - Python 3.11 environment (see Quickstart)  
-# > - Access to a Qdrant and Redis instance (using Docker)  
-# > - OpenAI API credentials for embedding & reranking  
+# This notebook implements a **production-ready ingestion strategy** that separates data ingestion from retrieval experiments:
 # 
-# Run the cells in order, or jump to the section that interests you. Let’s get started!  
+# ### **🏗️ Architecture Overview**
+# 
+# ```
+# ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+# │   Data Sources  │    │   Orchestration  │    │  Storage Layer  │
+# │                 │    │                  │    │                 │
+# │ • CSV Files     │───▶│ • Prefect Flows  │───▶│ • Redis (KV)    │
+# │ • APIs          │    │ • Schedule Tasks │    │ • Qdrant (Vec)  │
+# │ • Documents     │    │ • Error Handling │    │ • PostgreSQL    │
+# └─────────────────┘    └──────────────────┘    └─────────────────┘
+#          │                        │                        │
+#          └────────────────────────┼────────────────────────┘
+#                                   ▼
+#                         ┌──────────────────┐
+#                         │  Retrieval Apps  │
+#                         │                  │
+#                         │ • RAG Chains     │
+#                         │ • Evaluation     │
+#                         │ • Monitoring     │
+#                         └──────────────────┘
+# ```
+# 
+# ### **🔄 Data Flow Pipeline**
+# 
+# 1. **📥 Ingestion Phase** (Separate Process)
+#    - Load documents from various sources
+#    - Apply text splitting and chunking strategies  
+#    - Generate embeddings and store in vector databases
+#    - Persist parent documents in Redis key-value store
+#    - Track metadata and lineage in PostgreSQL
+# 
+# 2. **⚡ Retrieval Phase** (Runtime)
+#    - Connect to existing data stores
+#    - Run retrieval experiments without re-ingesting
+#    - Compare different strategies on the same dataset
+#    - Monitor performance with Phoenix observability
+# 
+# ### **💡 Key Benefits of This Approach**
+# 
+# | Benefit | Description |
+# |---------|-------------|
+# | **🔄 Persistent Storage** | Data survives notebook restarts - no re-ingestion needed |
+# | **⚡ Fast Iterations** | Experiment with different retrieval methods quickly |
+# | **🎯 Consistent Datasets** | Same data across all experiments ensures fair comparisons |
+# | **📊 Production Ready** | Mimics real-world deployment patterns |
+# | **🛠️ Modular Design** | Ingestion and retrieval can be scaled independently |
+# | **🔍 Observability** | Full tracing and monitoring with Phoenix + Prefect |
+# 
+# ## 🎯 **Getting Started: Ingestion Strategy Guide**
+# 
+# ### **Prerequisites**
+# 
+# **Infrastructure (via Docker Compose):**
+# ```bash
+# # Start all services
+# docker compose up -d
+# 
+# # Verify services are running
+# docker compose ps
+# ```
+# 
+# **Required Services:**
+# - **Qdrant** (Vector Database): `http://localhost:6333`
+# - **Redis** (Key-Value Store): `localhost:6379`  
+# - **PostgreSQL** (Metadata): `localhost:5432`
+# - **Phoenix** (Observability): `http://localhost:6006`
+# - **Prefect** (Orchestration): `http://localhost:4200`
+# - **MinIO** (Object Storage): `http://localhost:9001`
+# 
+# **Environment Setup:**
+# - Python 3.11+ environment
+# - OpenAI API credentials for embedding & reranking
+# - Qdrant Cloud credentials (optional - can use local Docker)
+# 
+# ### **🔧 Ingestion Workflow Options**
+# 
+# This notebook supports **three ingestion approaches**:
+# 
+# #### **Option 1: Smart Notebook Ingestion (Current)**
+# ```python
+# # Automatic data detection and reuse - perfect for learning!
+# if not data_exists:
+#     parent_document_retriever.add_documents(all_review_docs)
+# else:
+#     print("✅ Using existing data!")
+# ```
+# **✅ Best for:** Learning, experimentation, rapid iteration
+# 
+# #### **Option 2: Standalone Scripts**
+# ```bash
+# # Separate ingestion from retrieval
+# python ingestion.py --config production.yaml
+# jupyter notebook retrieval_experiments.ipynb
+# ```
+# **✅ Best for:** Controlled workflows, repeatable processes
+# 
+# #### **Option 3: Prefect Workflow Orchestration**
+# ```python
+# # Enterprise-grade pipeline with monitoring & retries
+# prefect deployment run 'rag-ingestion-pipeline/production'
+# ```
+# **✅ Best for:** Production deployments, enterprise reliability
+# 
+# > **📖 For Production Deployments**  
+# > See our comprehensive [Ingestion Pipeline Strategy Guide](docs/ingestion_pipeline_strategy.md) for:
+# > - Detailed Prefect integration research & trade-offs
+# > - Production implementation patterns  
+# > - Enterprise deployment strategies
+# > - Complete code examples and best practices
+# 
+# By the end of this notebook, you'll understand:
+# - **When to start simple** (Naive or BM25) versus **scale up** (Ensemble or Semantic)
+# - **How persistent storage** accelerates development and ensures consistency
+# - **Modern deployment patterns** for production RAG systems
+# - **Integration strategies** for monitoring, observability, and workflow management
+# 
+# > **✨ New: Smart Persistent Storage**  
+# > This notebook features **intelligent data persistence**! Data is automatically saved to Redis and Qdrant and reused between runs for faster iterations. No more waiting for re-ingestion!
+# 
+# Run the cells in order, or jump to the section that interests you. Let's get started!  
 # 
 
 # %% [markdown]
@@ -70,6 +184,7 @@ import os
 
 import os
 from datetime import datetime
+from phoenix.otel import register
 
 load_dotenv()
 
@@ -88,20 +203,17 @@ QDRANT_API_URL = os.getenv("QDRANT_API_URL")
 
 os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
 
+# configure the Phoenix tracer
+tracer_provider = register(
+  project_name=project_name,
+  auto_instrument=True # Auto-instrument your app based on installed OI dependencies
+)
+
 # %%
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 llm = ChatOpenAI(model="gpt-4.1-mini")
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-# %%
-from phoenix.otel import register
-
-# configure the Phoenix tracer
-tracer_provider = register(
-  project_name="my-llm-app", # Default is 'default'
-  auto_instrument=True # Auto-instrument your app based on installed OI dependencies
-)
 
 # %%
 # from langchain_core.prompts import ChatPromptTemplate
@@ -144,11 +256,18 @@ rag_prompt = ChatPromptTemplate.from_template(RAG_TEMPLATE)
 # ## 📊 Dataset Loading & Preprocessing for RAG
 
 # %% [markdown]
-# ##### TEMPORARY:  Qdrant and Redis Database reset
+# ##### ✅ PERSISTENT DATA STORAGE
 # 
-# - For now I'm doing a data reset before each run (🤷‍♂️ not best practice 🤷‍♀️)
+# **This notebook now uses persistent data storage!**
 # 
+# - 💾 **Redis & Qdrant data persists** between notebook runs
+# - ⚡ **Faster restarts** - no need to re-ingest data every time  
+# - 🔄 **Automatic detection** - notebook checks for existing data
+# - 🗑️ **Manual reset option** - use the reset utility above when needed
+# 
+# **Previous approach (manual reset before each run):**
 # ```bash
+# # Only run these commands if you want to start fresh:
 # docker compose stop qdrant redis
 # docker compose rm -f qdrant redis
 # docker volume rm langchain-retrieval-methods_qdrant_data langchain-retrieval-methods_redis_data
@@ -209,6 +328,73 @@ for i in range(1, 5):
 # %% [markdown]
 # ## 🏗️ Building RAG Infrastructure: Storage
 
+# %% [markdown]
+# ### 🔧 Data Management Utilities
+# 
+# The notebook now supports **persistent data storage** - data is automatically saved to Redis and Qdrant and reused between runs.
+# 
+# **Key Benefits:**
+# - ⚡ **Fast restarts** - no need to re-ingest data every time
+# - 🔄 **Consistent experiments** - same data across multiple runs  
+# - 💾 **Persistent storage** - survives notebook restarts
+# 
+# **Data Management Options:**
+# 
+# | Scenario | Command |
+# |----------|---------|
+# | 🚀 **First Run** | Just run the notebook - data will be ingested automatically |
+# | 🔄 **Subsequent Runs** | Data will be detected and reused automatically |
+# | 🗑️ **Force Fresh Data** | Run the reset command below, then continue with notebook |
+# | 📊 **Check Data Status** | The notebook will show data status before each operation |
+
+# %%
+def reset_data_stores():
+    """
+    🗑️ DANGER ZONE: Reset all persistent data stores
+    
+    This will:
+    - Clear all Redis data (parent documents)
+    - Clear all Qdrant collections (child chunks) 
+    - Force fresh ingestion on next run
+    
+    Only run this if you want to start completely fresh!
+    """
+    import subprocess
+    import sys
+    
+    print("🚨 WARNING: This will delete ALL data in Redis and Qdrant!")
+    response = input("Type 'RESET' to confirm deletion: ")
+    
+    if response == "RESET":
+        try:
+            # Stop containers, remove volumes, restart
+            commands = [
+                "docker compose stop redis qdrant",
+                "docker compose rm -f redis qdrant", 
+                "docker volume rm langchain-retrieval-methods_redis_data langchain-retrieval-methods_qdrant_data",
+                "docker compose up -d redis qdrant"
+            ]
+            
+            for cmd in commands:
+                print(f"Running: {cmd}")
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(f"⚠️  Command failed: {result.stderr}")
+                else:
+                    print(f"✅ {cmd}")
+            
+            print("✅ Data stores reset successfully!")
+            print("🔄 Continue with the notebook - fresh data will be ingested.")
+            
+        except Exception as e:
+            print(f"❌ Reset failed: {e}")
+            print("💡 Try running the Docker commands manually.")
+    else:
+        print("❌ Reset cancelled - data preserved.")
+
+# Uncomment the line below ONLY if you want to reset all data:
+# reset_data_stores()
+
 # %%
 from langchain_qdrant import QdrantVectorStore  # Updated import
 from langchain_openai import OpenAIEmbeddings
@@ -225,14 +411,58 @@ from langchain.storage import create_kv_docstore
 # - creates the vector store using the all_review_docs Document object
 
 # %%
-baseline_vectorstore = QdrantVectorStore.from_documents(
-    all_review_docs,
-    embeddings,
-    url=QDRANT_API_URL,
-    api_key=QDRANT_API_KEY,
-    prefer_grpc=True,
-    collection_name="johnwick_baseline"
-)
+def check_baseline_data_exists():
+    """Check if baseline Qdrant collection already has data"""
+    try:
+        if not cloud_client.collection_exists("johnwick_baseline"):
+            print("📭 Baseline collection doesn't exist yet.")
+            return False
+            
+        count = cloud_client.count(collection_name="johnwick_baseline").count
+        print(f"📊 Baseline collection: {count} vectors")
+        
+        exists = count > 0
+        if exists:
+            print("✅ Baseline data found!")
+        else:
+            print("📭 Baseline collection exists but is empty.")
+            
+        return exists
+        
+    except Exception as e:
+        print(f"⚠️  Error checking baseline data: {e}")
+        return False
+
+# Check for existing baseline data
+baseline_data_exists = check_baseline_data_exists()
+
+if not baseline_data_exists:
+    print("🔄 Creating baseline vectorstore with fresh data...")
+    print(f"📄 Processing {len(all_review_docs)} documents...")
+    
+    baseline_vectorstore = QdrantVectorStore.from_documents(
+        all_review_docs,
+        embeddings,
+        url=QDRANT_API_URL,
+        api_key=QDRANT_API_KEY,
+        prefer_grpc=True,
+        collection_name="johnwick_baseline"
+    )
+    
+    # Verify creation
+    final_count = cloud_client.count(collection_name="johnwick_baseline").count
+    print(f"✅ Baseline vectorstore created with {final_count} vectors!")
+else:
+    print("✅ Using existing baseline vectorstore!")
+    
+    # Connect to existing vectorstore
+    baseline_vectorstore = QdrantVectorStore(
+        embedding=embeddings,
+        url=QDRANT_API_URL,
+        api_key=QDRANT_API_KEY,
+        prefer_grpc=True,
+        collection_name="johnwick_baseline"
+    )
 
 # %% [markdown]
 # ### Level 2: Hierarchical Storage (Parent-Child Architecture)
@@ -276,6 +506,37 @@ parent_children_vectorstore = QdrantVectorStore(
 # #### Parent Document Retriever definition
 
 # %%
+def check_data_exists():
+    """Check if data already exists in Redis and Qdrant stores"""
+    try:
+        # Check Redis for parent documents
+        redis_keys = list(parent_document_store.yield_keys())
+        redis_count = len(redis_keys)
+        
+        # Check Qdrant for child chunks
+        qdrant_count = cloud_client.count(collection_name="johnwick_parent_children").count
+        
+        print(f"📊 Data Store Status:")
+        print(f"   Redis (parent docs): {redis_count} documents")
+        print(f"   Qdrant (child chunks): {qdrant_count} vectors")
+        
+        data_exists = redis_count > 0 and qdrant_count > 0
+        
+        if data_exists:
+            print("✅ Existing data found in both stores!")
+        else:
+            print("📭 No existing data found - will need to ingest.")
+            
+        return data_exists
+        
+    except Exception as e:
+        print(f"⚠️  Error checking data: {e}")
+        return False
+
+# Check for existing data
+data_exists = check_data_exists()
+
+# %%
 child_splitter = RecursiveCharacterTextSplitter(chunk_size=200)
 parent_document_retriever = ParentDocumentRetriever(
     vectorstore = parent_children_vectorstore,
@@ -283,28 +544,193 @@ parent_document_retriever = ParentDocumentRetriever(
     child_splitter=child_splitter,
 )
 
-parent_document_retriever.add_documents(all_review_docs)
+# Conditional data ingestion - only add documents if they don't already exist
+if not data_exists:
+    print("🔄 No existing data found. Populating data stores...")
+    print(f"📄 Ingesting {len(all_review_docs)} documents...")
+    
+    parent_document_retriever.add_documents(all_review_docs)
+    
+    # Verify ingestion was successful
+    final_check = check_data_exists()
+    if final_check:
+        print("✅ Data ingestion completed successfully!")
+    else:
+        print("❌ Data ingestion may have failed - please check stores.")
+else:
+    print("✅ Using existing data from Redis and Qdrant stores!")
+    print("💡 To force re-ingestion, restart Docker containers or clear the stores.")
+
+# %%
+# Validate that retriever can access the data
+def validate_retriever():
+    """Test that the retriever can successfully query the data"""
+    try:
+        test_query = "test query"
+        # Just test the vectorstore search to ensure child chunks are accessible
+        test_results = parent_children_vectorstore.similarity_search(test_query, k=1)
+        
+        if len(test_results) > 0:
+            # Check if parent documents are accessible via the child's doc_id
+            child_doc = test_results[0]
+            doc_id = child_doc.metadata.get('doc_id')
+            
+            if doc_id:
+                parent_doc = parent_document_store.mget([doc_id])
+                if parent_doc and parent_doc[0]:
+                    print("✅ Retriever validation successful - can access both child chunks and parent documents!")
+                    return True
+                else:
+                    print("⚠️  Child chunks found but parent document retrieval failed!")
+                    return False
+            else:
+                print("⚠️  Child chunks found but missing doc_id metadata!")
+                return False
+        else:
+            print("⚠️  No child chunks found in vectorstore!")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Retriever validation failed: {e}")
+        return False
+
+# Validate the retriever setup
+retriever_ready = validate_retriever()
+
+if not retriever_ready:
+    print("💡 If validation failed, try restarting with fresh data stores.")
+
+# %% [markdown]
+# ### 📊 Data Store Infrastructure Summary
+
+# %%
+def show_data_infrastructure_summary():
+    """Display a comprehensive summary of all data stores"""
+    print("=" * 60)
+    print("📊 DATA INFRASTRUCTURE SUMMARY")
+    print("=" * 60)
+    
+    # Baseline Vectorstore
+    try:
+        baseline_count = cloud_client.count(collection_name="johnwick_baseline").count
+        baseline_status = "✅ Ready" if baseline_count > 0 else "❌ Empty"
+    except:
+        baseline_status = "❌ Error"
+        baseline_count = 0
+    
+    # Parent-Child Architecture
+    try:
+        redis_count = len(list(parent_document_store.yield_keys()))
+        redis_status = "✅ Ready" if redis_count > 0 else "❌ Empty"
+        
+        parent_child_count = cloud_client.count(collection_name="johnwick_parent_children").count
+        parent_child_status = "✅ Ready" if parent_child_count > 0 else "❌ Empty"
+    except:
+        redis_status = "❌ Error"
+        parent_child_status = "❌ Error"
+        redis_count = 0
+        parent_child_count = 0
+    
+    # Semantic Vectorstore
+    try:
+        semantic_count = cloud_client.count(collection_name="johnwick_semantic").count
+        semantic_status = "✅ Ready" if semantic_count > 0 else "❌ Empty"
+    except:
+        semantic_status = "❌ Error"
+        semantic_count = 0
+    
+    print(f"🎯 Baseline Vectorstore:        {baseline_status:12} ({baseline_count:4} vectors)")
+    print(f"📦 Redis Parent Store:          {redis_status:12} ({redis_count:4} documents)")
+    print(f"🔍 Qdrant Child Chunks:         {parent_child_status:12} ({parent_child_count:4} vectors)")
+    print(f"🧠 Semantic Vectorstore:        {semantic_status:12} ({semantic_count:4} vectors)")
+    
+    print("-" * 60)
+    
+    all_ready = all([
+        baseline_count > 0,
+        redis_count > 0, 
+        parent_child_count > 0,
+        semantic_count > 0
+    ])
+    
+    if all_ready:
+        print("🎉 ALL DATA STORES READY - You can proceed with retrieval experiments!")
+    else:
+        print("⚠️  Some data stores are not ready. Check the status above.")
+    
+    print("=" * 60)
+
+# Show the infrastructure summary
+show_data_infrastructure_summary()
 
 # %% [markdown]
 # ### Level 3: Vector Storage organized by Semantic Chunks
 
 # %%
-semantic_chunker = SemanticChunker(
-    embeddings,
-    breakpoint_threshold_type="percentile"
-)
+def check_semantic_data_exists():
+    """Check if semantic Qdrant collection already has data"""
+    try:
+        if not cloud_client.collection_exists("johnwick_semantic"):
+            print("📭 Semantic collection doesn't exist yet.")
+            return False
+            
+        count = cloud_client.count(collection_name="johnwick_semantic").count
+        print(f"📊 Semantic collection: {count} vectors")
+        
+        exists = count > 0
+        if exists:
+            print("✅ Semantic data found!")
+        else:
+            print("📭 Semantic collection exists but is empty.")
+            
+        return exists
+        
+    except Exception as e:
+        print(f"⚠️  Error checking semantic data: {e}")
+        return False
 
-semantic_documents = semantic_chunker.split_documents(all_review_docs)
+# Check for existing semantic data
+semantic_data_exists = check_semantic_data_exists()
 
-# %%
-semantic_vectorstore = QdrantVectorStore.from_documents(
-    semantic_documents,
-    embeddings,
-    url=QDRANT_API_URL,
-    api_key=QDRANT_API_KEY,
-    prefer_grpc=True,
-    collection_name="johnwick_semantic"
-)
+if not semantic_data_exists:
+    print("🔄 Creating semantic chunks and vectorstore...")
+    
+    semantic_chunker = SemanticChunker(
+        embeddings,
+        breakpoint_threshold_type="percentile"
+    )
+    
+    print(f"📄 Processing {len(all_review_docs)} documents with semantic chunking...")
+    semantic_documents = semantic_chunker.split_documents(all_review_docs)
+    print(f"📊 Created {len(semantic_documents)} semantic chunks")
+    
+    semantic_vectorstore = QdrantVectorStore.from_documents(
+        semantic_documents,
+        embeddings,
+        url=QDRANT_API_URL,
+        api_key=QDRANT_API_KEY,
+        prefer_grpc=True,
+        collection_name="johnwick_semantic"
+    )
+    
+    # Verify creation
+    final_count = cloud_client.count(collection_name="johnwick_semantic").count
+    print(f"✅ Semantic vectorstore created with {final_count} vectors!")
+    
+else:
+    print("✅ Using existing semantic vectorstore!")
+    
+    # Connect to existing vectorstore  
+    semantic_vectorstore = QdrantVectorStore(
+        embedding=embeddings,
+        url=QDRANT_API_URL,
+        api_key=QDRANT_API_KEY,
+        prefer_grpc=True,
+        collection_name="johnwick_semantic"
+    )
+    
+    # Note: We don't recreate semantic_documents as they're not needed for retrieval
+    print("💡 Note: Semantic chunks are stored in Qdrant - no need to recreate in memory.")
 
 # %% [markdown]
 # ## 🎯 Core Learning: 7 Retrieval Strategies
@@ -437,12 +863,11 @@ semantic_retrieval_chain = (
 # ## 📈 Performance Monitoring & Evaluation Setup
 
 # %%
+# setup Arize Phoenix tracing
+
 tracer = tracer_provider.get_tracer(__name__)
 
 # %%
-# from langsmith import traceable
-
-# @traceablele(name="naive_retrieval", run_type="chain", metadata={"method":"naive"})
 @tracer.chain
 def trace_naive_retrieval(question: str):
     try:
@@ -558,50 +983,7 @@ ensemble_retrieval_chain_response = trace_ensemble_retrieval(question)["response
 
 # %% [markdown]
 # ## 📊 Results Analysis & Performance Visualization
-
-# %%
-from IPython.display import Markdown, display
-
-# Map of titles to response objects
-responses = {
-    "Naive Retrieval Chain Response":              naive_retrieval_chain_response,
-    "BM25 Retrieval Chain Response":               bm25_retrieval_chain_response,
-    "Contextual Compression Chain Response":       contextual_compression_retrieval_chain_response,
-    "Multi-Query Retrieval Chain Response":        multi_query_retrieval_chain_response,
-    "Parent Document Retrieval Chain Response":    parent_document_retrieval_chain_response,
-    "Ensemble Retrieval Chain Response":           ensemble_retrieval_chain_response,
-    "Semantic Retrieval Chain Response":           semantic_retrieval_chain_response,
-}
-
-for header, resp in responses.items():
-    display(Markdown(f"## {header}\n"))
-    print("\n")
-    print(resp)
-    print("\n")
-
-
-# %% [markdown]
-# ### Retrieval Chain validation
-
-# %%
-from IPython.display import Markdown, display
-
-# Map of titles to chains
-chains = {
-    "Naive Retrieval":              naive_retrieval_chain,
-    "BM25 Retrieval":               bm25_retrieval_chain,
-    "Contextual Compression":       contextual_compression_retrieval_chain,
-    "Multi-Query Retrieval":        multi_query_retrieval_chain,
-    "Parent Document Retrieval":    parent_document_retrieval_chain,
-    "Ensemble Retrieval":           ensemble_retrieval_chain,
-    "Semantic Retrieval":           semantic_retrieval_chain,
-}
-
-for title, chain in chains.items():
-    display(Markdown(f"## {title}\n"))
-    print(chain)
-    # print(chain.get_graph().draw_ascii())
-    print("\n")
-
+# 
+# **Arize Phoenix application URL:**  [http://localhost:6006/](http://localhost:6006/)
 
 

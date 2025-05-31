@@ -1,24 +1,17 @@
-# Docker Compose Configuration for LangChain Retrieval Methods
-# Updated: May 2025
-# Note: version specification is obsolete as of Docker Compose V2 (2022+)
-
 services:
-  # Qdrant Vector Database - for similarity search and AI applications
   qdrant:
     image: qdrant/qdrant:latest
     container_name: langchain_qdrant
     restart: unless-stopped
     ports:
-      - "6333:6333"  # HTTP API & Dashboard
-      - "6334:6334"  # gRPC API
+      - "6333:6333"
+      - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     environment:
       - QDRANT__LOG_LEVEL=${QDRANT__LOG_LEVEL}
     networks:
       - langchain_network
-    # Healthcheck omitted: Qdrant image does not include curl/wget/nc. Official docs recommend using external health checks (see admin guide).
-    # For health: run `curl http://localhost:6333/health` from the host or use the provided health_check.sh script.
     deploy:
       resources:
         limits:
@@ -27,7 +20,6 @@ services:
         reservations:
           memory: 2G
 
-  # Redis - in-memory data store for caching and parent document storage
   redis:
     image: redis:latest
     container_name: langchain_redis
@@ -36,10 +28,10 @@ services:
       - "6379:6379"
     command: [
       "redis-server",
-      "--save", "60", "1",           # Save if 1+ keys change in 60 seconds
-      "--loglevel", "warning",       # Reduced logging
-      "--maxmemory", "1gb",          # Memory limit
-      "--maxmemory-policy", "allkeys-lru"  # Eviction policy
+      "--save", "60", "1",
+      "--loglevel", "warning",
+      "--maxmemory", "1gb",
+      "--maxmemory-policy", "allkeys-lru"
     ]
     volumes:
       - redis_data:/data
@@ -51,7 +43,6 @@ services:
     networks:
       - langchain_network
 
-  # PostgreSQL - production-ready relational database
   postgres:
     image: postgres:latest
     container_name: langchain_postgres
@@ -78,7 +69,6 @@ services:
           memory: 2G
           cpus: '1.0'
 
-  # Adminer - web-based database management tool
   adminer:
     image: adminer:latest
     container_name: langchain_adminer
@@ -99,32 +89,75 @@ services:
       timeout: 5s
       retries: 5
 
-  # Phoenix - AI observability and evaluation platform
   phoenix:
     image: arizephoenix/phoenix:latest
     container_name: langchain_phoenix
     restart: unless-stopped
     ports:
-      - "6006:6006"   # Phoenix UI & HTTP OTLP
-      - "4317:4317"   # gRPC OTLP
+      - "6006:6006"
+      - "4317:4317"
     environment:
       - PHOENIX_WORKING_DIR=/mnt/data
       - PHOENIX_SQL_DATABASE_URL=${PHOENIX_SQL_DATABASE_URL}
     volumes:
       - phoenix_data:/mnt/data
-    stdin_open: true  # Enable interactive mode
-    tty: true         # Allocate pseudo-TTY
+    stdin_open: true
+    tty: true
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     networks:
       - langchain_network
 
-# Named volumes for data persistence
+  minio:
+    image: minio/minio:latest
+    container_name: langchain_minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}      # Default for dev
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}  # Default for dev
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - langchain_network
+
+  prefect-postgres:
+    image: postgres:alpine
+    container_name: prefect-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect_server
+    ports:
+      - "5433:5432"
+    volumes:
+      - prefect_postgres_data:/var/lib/postgresql/data
+    networks:
+      - langchain_network
+
+  prefect-server:
+    image: prefecthq/prefect:3-python3.12
+    container_name: prefect-server
+    depends_on:
+      - prefect-postgres
+    ports:
+      - "4200:4200"
+    environment:
+      # Tell Prefect where to find the Postgres container:
+      PREFECT_API_DATABASE_CONNECTION_URL: >-
+        postgresql+asyncpg://prefect:prefect@prefect-postgres:5432/prefect_server
+    command: >
+      prefect server start
+      --host 0.0.0.0
+      --port 4200
+    networks:
+      - langchain_network
+
 volumes:
   qdrant_data:
     driver: local
@@ -132,10 +165,13 @@ volumes:
     driver: local
   postgres_data:
     driver: local
+  prefect_postgres_data:
+    driver: local
   phoenix_data:
     driver: local
+  minio_data:
+    driver: local
 
-# Optional: Custom network for service isolation
 networks:
   langchain_network:
     driver: bridge

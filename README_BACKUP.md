@@ -327,4 +327,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Questions? Issues? Ideas?** Open an issue or start a discussion!
 
-**⭐ Star this repo** if it helps with your RAG projects!
+**⭐ Star this repo** if it helps with your RAG projects! 
