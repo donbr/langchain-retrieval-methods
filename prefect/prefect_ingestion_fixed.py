@@ -6,6 +6,7 @@ import requests
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import asyncio
+import json
 
 import prefect
 from prefect import flow, task, get_run_logger
@@ -436,24 +437,41 @@ async def master_ingestion_flow(
     _ = await asyncio.to_thread(validate_main_pfuture.result, raise_on_failure=True)
 
     # ─── Phase 6: Create a Markdown summary artifact ───
+    now = datetime.now().isoformat()
     summary_md = f"""
-    ## Ingestion Summary
+# Ingestion Summary – {now}
 
-    **Timestamp**: {datetime.now().isoformat()}
+| Variant         | Collection                | Docs Ingested | Chunks/Children | Final Vectors | Embedding Model           | Chunk Size |
+|----------------|---------------------------|---------------|-----------------|---------------|---------------------------|------------|
+| Baseline       | {config['baseline_collection']}       | {baseline_res.get('baseline_count', 0)} | N/A             | {baseline_res.get('baseline_count', 0)} | {config['embedding_model']} | N/A        |
+| Parent-Child   | {config['parent_child_collection']}   | {parent_child_res.get('parent_count', 0)} | {parent_child_res.get('child_count', 0)} | {parent_child_res.get('child_count', 0)} | {config['embedding_model']} | {config['chunk_size']} |
+| Semantic       | {config['semantic_collection']}       | {len(semantic_docs) if 'semantic_docs' in locals() else 'N/A'} | N/A             | {semantic_res.get('semantic_count', 0)} | {config['embedding_model']} | N/A        |
 
-    ### Counts
-    - **Baseline vectors**: {baseline_res.get("baseline_count", 0)}
-    - **Parent-Child parents**: {parent_child_res.get("parent_count", 0)}
-    - **Parent-Child children**: {parent_child_res.get("child_count", 0)}
-    - **Semantic chunks**: {semantic_res.get("semantic_count", 0)}
+## 1. Baseline Ingestion
+- **Collection**: {config['baseline_collection']}
+- **Documents ingested**: {baseline_res.get('baseline_count', 0)}
+- **Embedding model**: {config['embedding_model']}
 
-    ### Config
-    ```yaml
-    {config}
-    ```
-    """
+## 2. Parent-Child Ingestion
+- **Collection**: {config['parent_child_collection']}
+- **Documents ingested**: {parent_child_res.get('parent_count', 0)}
+- **Chunks/Children created**: {parent_child_res.get('child_count', 0)}
+- **Embedding model**: {config['embedding_model']}
+- **Chunk size**: {config['chunk_size']}
+
+## 3. Semantic Ingestion
+- **Collection**: {config['semantic_collection']}
+- **Semantic Chunks**: {semantic_res.get('semantic_count', 0)}
+- **Embedding model**: {config['embedding_model']}
+
+## Full Configuration
+```json
+{json.dumps(config, indent=2)}
+```
+"""
     await prefect.artifacts.create_markdown_artifact(
-        key="ingestion-summary", markdown=summary_md
+        key="ingestion-summary",
+        markdown=summary_md
     )
 
     logger.info("✅ Master ingestion flow completed successfully.")

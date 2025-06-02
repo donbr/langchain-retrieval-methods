@@ -28,9 +28,18 @@ from langchain.retrievers import ParentDocumentRetriever
 from langchain_community.storage import RedisStore
 from langchain.storage import create_kv_docstore
 from qdrant_client import QdrantClient, models
+from langchain_community.document_loaders.sql_database import SQLDatabaseLoader
+from langchain_community.utilities.sql_database import SQLDatabase
 
 # Load environment variables
 load_dotenv()
+
+# os.environ["POSTGRES_HOST"],
+# os.environ["POSTGRES_PORT"],
+# os.environ["POSTGRES_USER"],
+# os.environ["POSTGRES_PASSWORD"],
+# os.environ["POSTGRES_DB"]
+# os.environ["POSTGRES_TABLE"] # TABLE THAT CONTAINS LangChain Documents
 
 # Configuration dataclass for type safety and environment loading
 @dataclass
@@ -51,9 +60,9 @@ class PipelineConfig:
     def from_env(cls) -> "PipelineConfig":
         import os
         return cls(
-            baseline_collection=os.getenv("BASELINE_COLLECTION", "johnwick_baseline"),
-            parent_child_collection=os.getenv("PARENT_CHILD_COLLECTION", "johnwick_parent_children"),
-            semantic_collection=os.getenv("SEMANTIC_COLLECTION", "johnwick_semantic"),
+            baseline_collection=os.getenv("BASELINE_COLLECTION", "azurearch_baseline"),
+            parent_child_collection=os.getenv("PARENT_CHILD_COLLECTION", "azurearch_parent_children"),
+            semantic_collection=os.getenv("SEMANTIC_COLLECTION", "azurearch_semantic"),
             chunk_size=int(os.getenv("CHUNK_SIZE", "200")),
             vector_size=int(os.getenv("VECTOR_SIZE", "1536")),
             distance_metric=os.getenv("DISTANCE_METRIC", "COSINE"),
@@ -167,51 +176,39 @@ async def create_embeddings(model_name: str) -> OpenAIEmbeddings:
 
 @task(
     name="load-documents",
-    description="Load John Wick review documents from CSV files",
+    description="Load LangChain documents from Postgres table",
     retries=2,
     tags=["data-loading", "documents"],
     cache_policy=INPUTS,
     cache_expiration=timedelta(hours=24),
 )
 async def load_documents(data_dir: str) -> List:
-    """Load documents from CSV files with metadata enhancement."""
+    """Load documents from a Postgres table using LangChain's SQLDatabaseLoader."""
     logger = get_run_logger()
-    
     try:
-        data_path = Path(data_dir)
-        if not data_path.exists():
-            raise FileNotFoundError(f"Data directory not found: {data_dir}")
-            
-        all_review_docs = []
-        
-        for i in range(1, 5):
-            file_path = data_path / f"john_wick_{i}.csv"
-            if not file_path.exists():
-                logger.warning(f"⚠️  File not found: {file_path}")
-                continue
-                
-            logger.info(f"📄 Loading {file_path}")
-            loader = CSVLoader(
-                file_path=str(file_path),
-                metadata_columns=["Review_Date", "Review_Title", "Review_Url", "Author", "Rating"]
-            )
-            
-            movie_docs = loader.load()
-            for doc in movie_docs:
-                # Enhance metadata
-                doc.metadata["Movie_Title"] = f"John Wick {i}"
-                doc.metadata["Rating"] = int(doc.metadata["Rating"]) if doc.metadata["Rating"] else 0
-                doc.metadata["last_accessed_at"] = datetime.now().isoformat()
-                doc.metadata["ingestion_batch"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            all_review_docs.extend(movie_docs)
-            logger.info(f"✅ Loaded {len(movie_docs)} documents from John Wick {i}")
-        
-        logger.info(f"✅ Total documents loaded: {len(all_review_docs)}")
-        return all_review_docs
-        
+        # Build connection string from environment variables
+        pg_user = os.environ["POSTGRES_USER"]
+        pg_password = os.environ["POSTGRES_PASSWORD"]
+        pg_host = os.environ["POSTGRES_HOST"]
+        pg_port = os.environ["POSTGRES_PORT"]
+        pg_db = os.environ["POSTGRES_DB"]
+        pg_table = os.environ["POSTGRES_TABLE"]
+        # Standard columns for LangChain documents
+        content_column = os.environ.get("POSTGRES_CONTENT_COLUMN", "page_content")
+        metadata_column = os.environ.get("POSTGRES_METADATA_COLUMN", "metadata_json")
+        conn_str = f"postgresql+psycopg2://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+        logger.info(f"Loading documents from Postgres table '{pg_table}' at {pg_host}:{pg_port}/{pg_db}")
+        query = f"SELECT {content_column} as page_content, {metadata_column} as metadata FROM {pg_table}"
+        db = SQLDatabase.from_uri(conn_str)
+        loader = SQLDatabaseLoader(
+            query=query,
+            db=db
+        )
+        docs = loader.load()
+        logger.info(f"Loaded {len(docs)} documents from Postgres table '{pg_table}'")
+        return docs
     except Exception as e:
-        logger.error(f"❌ Failed to load documents: {e}")
+        logger.error(f"❌ Failed to load documents from Postgres: {e}")
         raise
 
 @task(
@@ -576,6 +573,7 @@ async def master_ingestion_flow(
         redis_store = await asyncio.to_thread(redis_future.result, raise_on_failure=True)
         qdrant_client = await asyncio.to_thread(qdrant_future.result, raise_on_failure=True)
         embeddings = await asyncio.to_thread(embeddings_future.result, raise_on_failure=True)
+
         # === PHASE 3: DATA LOADING (Moved before Phase 2) ===
         logger.info("📄 Phase 3: Data Loading")
         docs_future = load_documents.submit(config.data_dir)
