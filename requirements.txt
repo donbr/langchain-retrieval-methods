@@ -19,3 +19,5 @@ asyncpg
 prefect-aws
 pandas
 prefect
+ragas
+rapidfuzz

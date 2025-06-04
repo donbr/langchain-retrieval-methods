@@ -12,11 +12,16 @@ from langchain_core.documents import Document
 from huggingface_hub import login
 from datasets import Dataset
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_batch, Json
+from prefect.variables import Variable
 
 import requests
 import urllib3
 import datetime
+import uuid
+
+# Set a default USER_AGENT if not already set
+os.environ.setdefault("USER_AGENT", "langchain-retrieval-methods/1.0.0 (contact: dwbranson@gmail.com)")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -518,7 +523,7 @@ def prepare_hf_dataset(all_docs: List[Document]) -> List[Dict[str, str]]:
                 "metadata_json": prune_and_serialize(meta)
             })
             
-        logger.info(f"Prepared {len(records)} records for HuggingFace dataset")
+        logger.info(f"Prepared {len(records)} records for HuggingFace dataset/Postgres upload")
         return records
         
     except Exception as e:
@@ -593,46 +598,62 @@ def push_to_huggingface(records: List[Dict[str, str]], repo_name: str) -> str:
         )
         raise
 
+# --- Postgres Connection Helper ---
+def get_postgres_connection():
+    """
+    Get a Postgres connection using SUPABASE_DB_URL only.
+    """
+    import psycopg2
+    db_url = os.environ["SUPABASE_DB_URL"]
+    return psycopg2.connect(db_url)
+
 @task(
     name="upload-to-postgres",
-    description="Uploads processed documents to a Postgres database",
+    description="Uploads processed documents to a Postgres database using the new schema.",
     retries=2,
     retry_delay_seconds=30,
     tags=["postgres", "database", "output"]
 )
 def upload_to_postgres(records: List[Dict[str, str]]):
     """
-    Uploads records to a Postgres table.
+    Uploads records to the azure_arch_cert_documents table with the new schema:
+      - id (uuid primary key)
+      - content (text)
+      - metadata (jsonb)
+      - embedding (vector(1536)), set to NULL for now
     """
     logger = get_run_logger()
     try:
-        conn = psycopg2.connect(
-            host=os.environ["POSTGRES_HOST"],
-            port=os.environ["POSTGRES_PORT"],
-            user=os.environ["POSTGRES_USER"],
-            password=os.environ["POSTGRES_PASSWORD"],
-            dbname=os.environ["POSTGRES_DB"]
-        )
-        table = os.environ["POSTGRES_TABLE"]
+        conn = get_postgres_connection()
+        table = "azure_arch_cert_documents"
         with conn:
             with conn.cursor() as cur:
-                # Create table if not exists
+                # Create table if not exists with the new schema
                 cur.execute(f"""
                     CREATE TABLE IF NOT EXISTS {table} (
-                        id SERIAL PRIMARY KEY,
-                        page_content TEXT,
-                        metadata_json JSONB
+                        id uuid PRIMARY KEY,
+                        content text,
+                        metadata jsonb,
+                        embedding vector(1536)
                     );
                 """)
-                # Insert records
-                data = [(r["page_content"], r["metadata_json"]) for r in records]
+                # Insert records (embedding is set to NULL for now)
+                data = [
+                    (
+                        str(uuid.uuid4()),
+                        r["page_content"],
+                        Json(json.loads(r["metadata_json"])) if isinstance(r["metadata_json"], str) else Json(r["metadata_json"]),
+                        None
+                    )
+                    for r in records
+                ]
                 execute_batch(
                     cur,
-                    f"INSERT INTO {table} (page_content, metadata_json) VALUES (%s, %s)",
+                    f"INSERT INTO {table} (id, content, metadata, embedding) VALUES (%s, %s, %s, %s)",
                     data
                 )
-        logger.info(f"Uploaded {len(records)} records to Postgres table '{table}'")
-        return f"Uploaded {len(records)} records to Postgres table '{table}'"
+        logger.info(f"Uploaded {len(records)} records to Postgres table '{table}' with new schema")
+        return f"Uploaded {len(records)} records to Postgres table '{table}' with new schema"
     except Exception as e:
         logger.error(f"Error uploading to Postgres: {str(e)}")
         raise
@@ -640,48 +661,56 @@ def upload_to_postgres(records: List[Dict[str, str]]):
 # --- Main Flow ---
 
 @flow(
-    name="Azure Architect Renewal Document Pipeline",
-    description="Downloads and processes Azure Architect renewal module HTML files.",
+    name="Azure AI Engineer Renewal Document Pipeline",
+    description="Downloads and processes Azure AI Engineer renewal module HTML files.",
     log_prints=True,
     version=os.environ.get("PIPELINE_VERSION", "1.0.0")
 )
-def azure_arch_docloader_pipeline(
+def azure_ai_engineer_docloader_pipeline(
     HTML_URLS: List[str] = [],
-    HTML_DOWNLOAD_DIR: str = "azure_arch_html",
+    HTML_DOWNLOAD_DIR: str = "azure_ai_engineer_html",
     HF_DOCLOADER_REPO: str = os.environ.get("HF_DOCLOADER_REPO", ""),
 ):
     """
-    Pipeline to download and process Azure Architect renewal module HTML files.
+    Pipeline to download and process Azure AI Engineer renewal module HTML files.
     1. Download all HTML files (checkpoint)
     2. Process downloaded files by reading as text and wrapping in LangChain Document objects (established, dependency-free pattern)
     """
     logger = get_run_logger()
-    logger.info("Starting Azure Architect Renewal Document Pipeline")
+    logger.info("Starting Azure AI Engineer Renewal Document Pipeline")
 
-    # If HTML_URLS is empty, import from azure-arch-cert-renewal.py
+    # If HTML_URLS is empty, import from azure_ai_engineer_renewal.py
     if not HTML_URLS:
-        from azure_arch_cert_renewal import (
-            RELATIONAL_DATA_URLS,
-            NON_RELATIONAL_DATA_URLS,
-            HADR_URLS,
-            COMPUTE_SOLUTION_URLS,
-            APPLICATION_ARCHITECTURE_URLS,
-            NETWORK_SOLUTIONS_URLS,
-            DATA_INTEGRATION_URLS,
+        from langchain_flows.flows.azure_ai_engineer_renewal import (
+            SPEECH_ENABLED_APPS_URLS,
+            TRANSLATE_SPEECH_URLS,
+            CREATE_AZURE_AI_CUSTOM_SKILL_URLS,
+            BUILD_LANGUAGE_UNDERSTANDING_MODEL_URLS,
+            INVESTIGATE_CONTAINER_URLS,
+            ANALYZE_TEXT_URLS,
+            DEVELOP_OPENAI_URLS,
+            CREATE_QA_SOLUTION_URLS,
+            USE_OWN_DATA_URLS,
+            FORM_RECOGNIZER_URLS,
+            ANALYZE_IMAGES_URLS,
         )
         HTML_URLS = (
-            RELATIONAL_DATA_URLS
-            + NON_RELATIONAL_DATA_URLS
-            + HADR_URLS
-            + COMPUTE_SOLUTION_URLS
-            + APPLICATION_ARCHITECTURE_URLS
-            + NETWORK_SOLUTIONS_URLS
-            + DATA_INTEGRATION_URLS
+            SPEECH_ENABLED_APPS_URLS
+            + TRANSLATE_SPEECH_URLS
+            + CREATE_AZURE_AI_CUSTOM_SKILL_URLS
+            + BUILD_LANGUAGE_UNDERSTANDING_MODEL_URLS
+            + INVESTIGATE_CONTAINER_URLS
+            + ANALYZE_TEXT_URLS
+            + DEVELOP_OPENAI_URLS
+            + CREATE_QA_SOLUTION_URLS
+            + USE_OWN_DATA_URLS
+            + FORM_RECOGNIZER_URLS
+            + ANALYZE_IMAGES_URLS
         )
 
     # Create artifact with pipeline configuration
     create_table_artifact(
-        key="azure-arch-pipeline-configuration",
+        key="azure-ai-engineer-pipeline-configuration",
         table={
             "columns": ["Parameter", "Value"],
             "data": [
@@ -690,7 +719,7 @@ def azure_arch_docloader_pipeline(
                 ["HuggingFace Repository", HF_DOCLOADER_REPO or "Not specified"]
             ]
         },
-        description="Azure Architect pipeline configuration parameters"
+        description="Azure AI Engineer pipeline configuration parameters"
     )
 
     validate_environment()
@@ -700,18 +729,33 @@ def azure_arch_docloader_pipeline(
     webbase_future = load_webbase_html.submit(HTML_URLS)
     docs = webbase_future.result()
 
-    html_file = save_docs_json(docs, "azure_arch_html_docs.json")
+    # --- Debug: limit number of docs for debugging ---
+    max_docs = None
+    try:
+        max_docs = Variable.get("max_docs_debug", default=None)
+    except Exception:
+        max_docs = os.environ.get("MAX_DOCS_DEBUG", None)
+    if max_docs is not None:
+        try:
+            max_docs_int = int(max_docs)
+            logger.info(f"⚠️  Limiting documents to first {max_docs_int} for debugging (max_docs_debug)")
+            docs = docs[:max_docs_int]
+        except Exception as e:
+            logger.warning(f"Could not apply max_docs_debug: {e}")
+    logger.info(f"Number of documents after debug limiting: {len(docs)}")
+
+    html_file = save_docs_json(docs, "azure_ai_engineer_html_docs.json")
 
     # Create summary statistics artifact
     create_table_artifact(
-        key="azure-arch-document-summary",
+        key="azure-ai-engineer-document-summary",
         table={
             "columns": ["Source", "Document Count", "Output File"],
             "data": [
-                ["Azure Architect HTML", len(docs), html_file],
+                ["Azure AI Engineer HTML", len(docs), html_file],
             ]
         },
-        description="Summary of Azure Architect HTML documents loaded"
+        description="Summary of Azure AI Engineer HTML documents loaded"
     )
 
     # Push to HuggingFace if repository is specified
@@ -729,12 +773,12 @@ def azure_arch_docloader_pipeline(
 
     # Final success artifact
     create_markdown_artifact(
-        key="azure-arch-pipeline-summary",
-        markdown=f"""# Azure Architect Pipeline Execution Summary\n\n## Success! ✅\n\nThe Azure Architect Renewal Document Pipeline completed successfully.\n\n## Statistics\n- HTML Documents: {len(docs)}\n\n## Outputs\n- HTML JSON: `{html_file}`\n{f'- Published to: [{HF_DOCLOADER_REPO}](https://huggingface.co/datasets/{HF_DOCLOADER_REPO})' if HF_DOCLOADER_REPO else ''}\n""",
-        description="Azure Architect pipeline execution summary"
+        key="azure-ai-engineer-pipeline-summary",
+        markdown=f"""# Azure AI Engineer Pipeline Execution Summary\n\n## Success! ✅\n\nThe Azure AI Engineer Renewal Document Pipeline completed successfully.\n\n## Statistics\n- HTML Documents: {len(docs)}\n\n## Outputs\n- HTML JSON: `{html_file}`\n{f'- Published to: [{HF_DOCLOADER_REPO}](https://huggingface.co/datasets/{HF_DOCLOADER_REPO})' if HF_DOCLOADER_REPO else ''}\n""",
+        description="Azure AI Engineer pipeline execution summary"
     )
 
-    logger.info("Azure Architect Pipeline complete.")
+    logger.info("Azure AI Engineer Pipeline complete.")
     return {
         "html_count": len(docs),
         "output_file": html_file,
@@ -742,4 +786,4 @@ def azure_arch_docloader_pipeline(
     }
 
 if __name__ == "__main__":
-    azure_arch_docloader_pipeline()
+    azure_ai_engineer_docloader_pipeline()

@@ -25,6 +25,7 @@ This guide provides essential Docker administration commands for managing the in
 | **Prefect UI** | http://localhost:4200 | None (default) | Workflow orchestration, runs & deployment monitoring |
 | **Phoenix UI** | http://localhost:6006 | None | AI observability, traces & span analysis |
 | **Adminer** | http://localhost:8080 | see below | Database management & SQL queries |
+| **RedisInsight** | http://localhost:5540 | None (default) | Redis GUI for browsing, querying, and visualizing Redis data |
 
 #### Adminer - Arize Phoenix and General Use
 - **Server**: `postgres`
@@ -38,15 +39,37 @@ This guide provides essential Docker administration commands for managing the in
 - **Password**: `prefect`
 - **Database**: `prefect_server`
 
-**Quick Access Commands:**
+### RedisInsight (GUI for Redis)
+
+**Connection Information:**
+- **URL:** http://localhost:5540
+- **Port:** 5540
+- **Password:** None (default configuration)
+
+**Usage:**
+- Open your browser and go to http://localhost:5540
+- Add a new Redis database connection:
+  - **Host:** `redis`
+  - **Port:** `6379`
+  - **Password:** (leave blank unless you set one)
+- Browse keys, run queries, visualize data, and monitor Redis performance.
+
+**Troubleshooting:**
 ```bash
-# Open all interfaces (requires your default browser)
-open http://localhost:6333/dashboard  # Qdrant
-open http://localhost:9001            # MinIO
-open http://localhost:4200            # Prefect
-open http://localhost:6006            # Phoenix  
-open http://localhost:8080            # Adminer
+# Check RedisInsight logs
+docker compose logs -f redisinsight
+
+# Restart RedisInsight service
+docker compose restart redisinsight
+
+# Remove and recreate RedisInsight container (data is persisted in volume)
+docker compose rm -f redisinsight
+docker compose up -d redisinsight
 ```
+
+**References:**
+- [RedisInsight Docker Hub](https://hub.docker.com/r/redis/redisinsight)
+- [RedisInsight Documentation](https://docs.redis.com/latest/ri/)
 
 ## Service Management
 
@@ -253,6 +276,38 @@ exit
 # Monitor Redis operations in real-time
 docker exec -it langchain_redis redis-cli MONITOR
 ```
+
+### RedisInsight (GUI for Redis)
+
+**Connection Information:**
+- **URL:** http://localhost:5540
+- **Port:** 5540
+- **Password:** None (default configuration)
+
+**Usage:**
+- Open your browser and go to http://localhost:5540
+- Add a new Redis database connection:
+  - **Host:** `redis`
+  - **Port:** `6379`
+  - **Password:** (leave blank unless you set one)
+- Browse keys, run queries, visualize data, and monitor Redis performance.
+
+**Troubleshooting:**
+```bash
+# Check RedisInsight logs
+docker compose logs -f redisinsight
+
+# Restart RedisInsight service
+docker compose restart redisinsight
+
+# Remove and recreate RedisInsight container (data is persisted in volume)
+docker compose rm -f redisinsight
+docker compose up -d redisinsight
+```
+
+**References:**
+- [RedisInsight Docker Hub](https://hub.docker.com/r/redis/redisinsight)
+- [RedisInsight Documentation](https://docs.redis.com/latest/ri/)
 
 ### PostgreSQL Database (Main)
 

@@ -158,6 +158,20 @@ services:
     networks:
       - langchain_network
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: langchain_redisinsight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    networks:
+      - langchain_network
+    depends_on:
+      - redis
+    # When connecting to Redis from RedisInsight, use host 'redis' and port '6379' (the service name, not 'localhost')
+
 volumes:
   qdrant_data:
     driver: local
@@ -170,6 +184,8 @@ volumes:
   phoenix_data:
     driver: local
   minio_data:
+    driver: local
+  redisinsight_data:
     driver: local
 
 networks:

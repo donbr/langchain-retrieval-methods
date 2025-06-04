@@ -10,6 +10,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+import json
+import collections.abc
 
 from prefect import flow, task, get_run_logger
 from prefect.task_runners import ThreadPoolTaskRunner
@@ -18,7 +20,9 @@ from prefect.artifacts import create_markdown_artifact
 from prefect.cache_policies import NO_CACHE, INPUTS
 from prefect.futures import wait
 from dotenv import load_dotenv
+from prefect.variables import Variable
 
+from langchain_core.documents import Document
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings
@@ -28,9 +32,21 @@ from langchain.retrievers import ParentDocumentRetriever
 from langchain_community.storage import RedisStore
 from langchain.storage import create_kv_docstore
 from qdrant_client import QdrantClient, models
+from langchain_community.document_loaders.sql_database import SQLDatabaseLoader
+from langchain_community.utilities.sql_database import SQLDatabase
+
+from prefect.variables import Variable
+# Variable.set("max_docs_debug", 5)
 
 # Load environment variables
 load_dotenv()
+
+# os.environ["POSTGRES_HOST"],
+# os.environ["POSTGRES_PORT"],
+# os.environ["POSTGRES_USER"],
+# os.environ["POSTGRES_PASSWORD"],
+# os.environ["POSTGRES_DB"]
+# os.environ["POSTGRES_TABLE"] # TABLE THAT CONTAINS LangChain Documents
 
 # Configuration dataclass for type safety and environment loading
 @dataclass
@@ -43,6 +59,7 @@ class PipelineConfig:
     distance_metric: str = "COSINE"
     embedding_model: str = "text-embedding-3-small"
     redis_url: str = "redis://localhost:6379"
+    redis_api_key: Optional[str] = None
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: Optional[str] = None
     data_dir: str = "data"
@@ -51,14 +68,15 @@ class PipelineConfig:
     def from_env(cls) -> "PipelineConfig":
         import os
         return cls(
-            baseline_collection=os.getenv("BASELINE_COLLECTION", "johnwick_baseline"),
-            parent_child_collection=os.getenv("PARENT_CHILD_COLLECTION", "johnwick_parent_children"),
-            semantic_collection=os.getenv("SEMANTIC_COLLECTION", "johnwick_semantic"),
+            baseline_collection=os.getenv("BASELINE_COLLECTION", "azurearch_baseline"),
+            parent_child_collection=os.getenv("PARENT_CHILD_COLLECTION", "azurearch_parent_children"),
+            semantic_collection=os.getenv("SEMANTIC_COLLECTION", "azurearch_semantic"),
             chunk_size=int(os.getenv("CHUNK_SIZE", "200")),
             vector_size=int(os.getenv("VECTOR_SIZE", "1536")),
             distance_metric=os.getenv("DISTANCE_METRIC", "COSINE"),
             embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
+            redis_api_key=os.getenv("REDIS_API_KEY"),
             qdrant_url=os.getenv("QDRANT_API_URL", "http://localhost:6333"),
             qdrant_api_key=os.getenv("QDRANT_API_KEY"),
             data_dir=os.getenv("DATA_DIR", "data"),
@@ -165,53 +183,121 @@ async def create_embeddings(model_name: str) -> OpenAIEmbeddings:
         logger.error(f"❌ Failed to create embeddings: {e}")
         raise
 
+def validate_and_flatten_metadata(docs, logger=None):
+    """
+    Ensure all Document.metadata fields are dicts, JSON-serializable, and flat.
+    Flattens nested dicts (dot notation), removes non-serializable fields, and logs issues.
+    """
+    def flatten(d, parent_key='', sep='.'):  # flatten nested dicts
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                # Convert lists to JSON strings
+                items.append((new_key, json.dumps(v)))
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    for i, doc in enumerate(docs):
+        # Parse string metadata
+        if isinstance(doc.metadata, str):
+            try:
+                doc.metadata = json.loads(doc.metadata)
+            except Exception as e:
+                if logger:
+                    logger.warning(f"Could not parse metadata for doc {i}: {e}")
+                doc.metadata = {}
+        # Ensure dict
+        if not isinstance(doc.metadata, dict):
+            if logger:
+                logger.warning(f"Metadata for doc {i} is not a dict. Overwriting with empty dict.")
+            doc.metadata = {}
+        # Flatten
+        doc.metadata = flatten(doc.metadata)
+        # Remove non-serializable fields
+        for k in list(doc.metadata.keys()):
+            try:
+                json.dumps(doc.metadata[k])
+            except Exception:
+                if logger:
+                    logger.warning(f"Non-serializable metadata field '{k}' in doc {i}. Removing.")
+                del doc.metadata[k]
+    return docs
+
 @task(
-    name="load-documents",
-    description="Load John Wick review documents from CSV files",
+    name="load-documents-from-postgres",
+    description="Load LangChain documents from Postgres table",
     retries=2,
     tags=["data-loading", "documents"],
     cache_policy=INPUTS,
     cache_expiration=timedelta(hours=24),
 )
-async def load_documents(data_dir: str) -> List:
-    """Load documents from CSV files with metadata enhancement."""
+async def load_documents(data_dir: str) -> List[Document]:
+    """Load documents from a Postgres table using direct JSONB extraction (pg_to_qdrant_flow.py style)."""
     logger = get_run_logger()
-    
     try:
-        data_path = Path(data_dir)
-        if not data_path.exists():
-            raise FileNotFoundError(f"Data directory not found: {data_dir}")
-            
-        all_review_docs = []
-        
-        for i in range(1, 5):
-            file_path = data_path / f"john_wick_{i}.csv"
-            if not file_path.exists():
-                logger.warning(f"⚠️  File not found: {file_path}")
+        pg_user = os.environ["POSTGRES_USER"]
+        pg_password = os.environ["POSTGRES_PASSWORD"]
+        pg_host = os.environ["POSTGRES_HOST"]
+        pg_port = os.environ["POSTGRES_PORT"]
+        pg_db = os.environ["POSTGRES_DB"]
+        pg_table = os.environ["POSTGRES_TABLE"]
+        jsonb_column = os.getenv("JSONB_COLUMN_NAME", "document")
+        conn_str = f"postgresql+psycopg2://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+        logger.info(f"Loading documents from Postgres table '{pg_table}' at {pg_host}:{pg_port}/{pg_db}, column '{jsonb_column}'")
+
+        # Use SQLDatabaseLoader to fetch the entire JSONB column as a string
+        query = f"SELECT {jsonb_column} FROM {pg_table};"
+        db = SQLDatabase.from_uri(conn_str)
+        loader = SQLDatabaseLoader(query=query, db=db)
+        loaded_rows = loader.load()
+        logger.info(f"Loaded {len(loaded_rows)} rows from SQLDatabaseLoader.")
+
+        processed_docs = []
+        for i, doc in enumerate(loaded_rows):
+            # doc.page_content is the raw JSON string or dict from the column
+            doc_data = doc.page_content
+            if isinstance(doc_data, str):
+                try:
+                    doc_obj = json.loads(doc_data)
+                except Exception as e:
+                    logger.warning(f"Row {i}: Could not parse JSON string: {e}. Skipping.")
+                    continue
+            elif isinstance(doc_data, dict):
+                doc_obj = doc_data
+            else:
+                logger.warning(f"Row {i}: Unexpected type for document column: {type(doc_data)}. Skipping.")
                 continue
-                
-            logger.info(f"📄 Loading {file_path}")
-            loader = CSVLoader(
-                file_path=str(file_path),
-                metadata_columns=["Review_Date", "Review_Title", "Review_Url", "Author", "Rating"]
-            )
-            
-            movie_docs = loader.load()
-            for doc in movie_docs:
-                # Enhance metadata
-                doc.metadata["Movie_Title"] = f"John Wick {i}"
-                doc.metadata["Rating"] = int(doc.metadata["Rating"]) if doc.metadata["Rating"] else 0
-                doc.metadata["last_accessed_at"] = datetime.now().isoformat()
-                doc.metadata["ingestion_batch"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            all_review_docs.extend(movie_docs)
-            logger.info(f"✅ Loaded {len(movie_docs)} documents from John Wick {i}")
-        
-        logger.info(f"✅ Total documents loaded: {len(all_review_docs)}")
-        return all_review_docs
-        
+
+            page_content = doc_obj.get("page_content")
+            metadata = doc_obj.get("metadata", {})
+            if not isinstance(page_content, str):
+                logger.warning(f"Row {i}: 'page_content' is not a string or missing. Skipping.")
+                continue
+            if not isinstance(metadata, dict):
+                logger.warning(f"Row {i}: 'metadata' is not a dict. Using empty dict.")
+                metadata = {}
+            if i < 3:
+                logger.info(f"[LOAD_DOCS] Row {i} page_content: {page_content[:100]}...")
+                logger.info(f"[LOAD_DOCS] Row {i} metadata: {repr(metadata)}")
+            processed_docs.append(Document(page_content=page_content, metadata=metadata))
+
+        logger.info(f"Validating and flattening metadata for {len(processed_docs)} documents...")
+        final_docs = validate_and_flatten_metadata(processed_docs, logger=logger)
+        if final_docs and len(final_docs) > 0 and final_docs[0]:
+            if isinstance(final_docs[0], Document):
+                logger.info(f"[LOAD_DOCS_POST_FLATTEN] Sample Doc 0 metadata after flatten: {repr(final_docs[0].metadata)}")
+            else:
+                logger.info(f"[LOAD_DOCS_POST_FLATTEN] final_docs[0] is not a Document object, it is type: {type(final_docs[0])}")
+        else:
+            logger.info("[LOAD_DOCS_POST_FLATTEN] final_docs is empty or first element is problematic.")
+        logger.info(f"Successfully processed and validated {len(final_docs)} documents from Postgres table '{pg_table}'")
+        return final_docs
     except Exception as e:
-        logger.error(f"❌ Failed to load documents: {e}")
+        logger.error(f"❌ Failed to load documents from Postgres: {e}")
         raise
 
 @task(
@@ -254,7 +340,7 @@ async def create_semantic_chunks(
     retry_delay_seconds=20
 )
 async def baseline_ingest_flow(
-    documents: List,
+    documents: List[Document],
     embeddings: OpenAIEmbeddings,
     collection_name: str,
     experiment_version: str = "v1.0"
@@ -266,6 +352,25 @@ async def baseline_ingest_flow(
         logger.info(f"🎯 BASELINE INGESTION START - Version: {experiment_version}")
         logger.info(f"📊 Processing {len(documents)} documents for collection: {collection_name}")
         
+        if documents: # Add logging for the first document
+            logger.info(f"[BASELINE_SUBFLOW_ENTRY] Doc 0 metadata: {repr(documents[0].metadata)}")
+            logger.info(f"[BASELINE_SUBFLOW_ENTRY] Doc 0 page_content: {documents[0].page_content[:100]}...")
+        else:
+            logger.warning("[BASELINE_SUBFLOW_ENTRY] Received empty list of documents.")
+            # Potentially return early or raise error if empty documents list is not expected
+            return {{
+                "subflow": "baseline",
+                "collection_name": collection_name,
+                "documents_ingested": 0,
+                "final_count": 0,
+                "error": "No documents provided to subflow",
+                "experiment_version": experiment_version,
+                "timestamp": datetime.now().isoformat()
+            }}
+            
+        # Log metadata of first 3 documents
+        for i, doc in enumerate(documents[:3]):
+            logger.info(f"Document {i} metadata before ingestion: {doc.metadata}")
         # Use URL/API key directly to avoid client serialization issues
         baseline_vectorstore = QdrantVectorStore.from_documents(
             documents,
@@ -273,7 +378,9 @@ async def baseline_ingest_flow(
             url=os.getenv("QDRANT_API_URL"),
             api_key=os.getenv("QDRANT_API_KEY"),
             prefer_grpc=True,
-            collection_name=collection_name
+            collection_name=collection_name,
+            content_payload_key="page_content",
+            metadata_payload_key="metadata"
         )
         
         # Create client to check final count
@@ -332,6 +439,8 @@ async def parent_child_ingest_flow(
             embedding=embeddings,
             client=qdrant_client,
             collection_name=collection_name,
+            content_payload_key="page_content",
+            metadata_payload_key="metadata"
         )
         
         # Setup retriever
@@ -341,7 +450,9 @@ async def parent_child_ingest_flow(
             docstore=parent_document_store,
             child_splitter=child_splitter,
         )
-        
+        # Log metadata of first 3 documents
+        for i, doc in enumerate(documents[:3]):
+            logger.info(f"Document {i} metadata before parent-child ingestion: {doc.metadata}")
         # Perform ingestion
         start_time = datetime.now()
         retriever.add_documents(documents)
@@ -398,7 +509,9 @@ async def semantic_ingest_flow(
             url=os.getenv("QDRANT_API_URL"),
             api_key=os.getenv("QDRANT_API_KEY"),
             prefer_grpc=True,
-            collection_name=collection_name
+            collection_name=collection_name,
+            content_payload_key="page_content",
+            metadata_payload_key="metadata"
         )
         
         # Create client to check final count
@@ -576,14 +689,32 @@ async def master_ingestion_flow(
         redis_store = await asyncio.to_thread(redis_future.result, raise_on_failure=True)
         qdrant_client = await asyncio.to_thread(qdrant_future.result, raise_on_failure=True)
         embeddings = await asyncio.to_thread(embeddings_future.result, raise_on_failure=True)
+
         # === PHASE 3: DATA LOADING (Moved before Phase 2) ===
         logger.info("📄 Phase 3: Data Loading")
         docs_future = load_documents.submit(config.data_dir)
         documents = await asyncio.to_thread(docs_future.result, raise_on_failure=True)
+        # --- Debug limit: max_docs_debug ---
+        max_docs = await Variable.get("max_docs_debug", default=None)
+        if max_docs is not None:
+            try:
+                max_docs_int = int(max_docs)
+                logger.info(f"⚠️  Limiting documents to first {max_docs_int} for debugging (max_docs_debug)")
+                documents = documents[:max_docs_int]
+            except Exception as e:
+                logger.warning(f"Could not apply max_docs_debug: {e}")
         if not documents:
             raise ValueError("No documents loaded - check data directory and files")
         semantic_docs_future = create_semantic_chunks.submit(documents, embeddings)
         semantic_documents = await asyncio.to_thread(semantic_docs_future.result, raise_on_failure=True)
+        # --- Debug limit: max_docs_debug for semantic chunks ---
+        if max_docs is not None:
+            try:
+                max_docs_int = int(max_docs)
+                logger.info(f"⚠️  Limiting semantic chunks to first {max_docs_int} for debugging (max_docs_debug)")
+                semantic_documents = semantic_documents[:max_docs_int]
+            except Exception as e:
+                logger.warning(f"Could not apply max_docs_debug to semantic chunks: {e}")
         # === PHASE 2: DATA ASSESSMENT (Now after Data Loading) ===
         logger.info("📊 Phase 2: Data Assessment")
         data_status = await check_existing_data(redis_store, qdrant_client, config.__dict__)
@@ -721,4 +852,9 @@ async def run_parent_child_only(
 
 if __name__ == "__main__":
     # Run the master flow (one command for everything)
-    asyncio.run(master_ingestion_flow()) 
+    # asyncio.run(master_ingestion_flow()) 
+
+    # To run only a specific subflow for debugging:
+    # asyncio.run(run_parent_child_only())
+    # asyncio.run(run_semantic_only())
+    asyncio.run(run_baseline_only()) # Focus on baseline for now 
